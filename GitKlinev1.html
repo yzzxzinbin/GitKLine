@@ -7619,7 +7619,6 @@
 
                 if (shouldScroll) {
                     const browser = document.getElementById('diffBrowser');
-                    const browserRect = browser.getBoundingClientRect();
 
                     // 找到 chunk 中最早的变动行（add 或 del）
                     let targetEl = chunk;
@@ -7628,8 +7627,18 @@
                         targetEl = changeLines[0];
                     }
 
-                    const targetRect = targetEl.getBoundingClientRect();
-                    const relativeTop = targetRect.top - browserRect.top + browser.scrollTop;
+                    // 计算 targetEl 相对于 browser 的 offsetTop
+                    // 使用 offsetTop 链，不受 transform: scale() 影响
+                    let relativeTop = 0;
+                    let el = targetEl;
+                    const browserOffsetTop = browser.offsetTop;
+                    while (el && el !== browser) {
+                        relativeTop += el.offsetTop;
+                        el = el.offsetParent;
+                    }
+                    // 减去 browser 自身的 offsetTop，得到在 browser 内部的相对位置
+                    relativeTop -= browserOffsetTop;
+
                     const targetScroll = relativeTop - browser.clientHeight / 3;
 
                     browser.scrollTo({
