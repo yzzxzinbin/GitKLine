@@ -6479,7 +6479,11 @@
                         sorted.sort((a, b) => b.klineCount - a.klineCount);
                         break;
                     case 'name':
-                        sorted.sort((a, b) => a.path.localeCompare(b.path));
+                        sorted.sort((a, b) => {
+                            const fileA = a.path.split('/').pop();
+                            const fileB = b.path.split('/').pop();
+                            return fileA.localeCompare(fileB);
+                        });
                         break;
                     default:
                         sorted.sort((a, b) => b.lastPrice - a.lastPrice);
