@@ -3648,23 +3648,30 @@
                 }
 
                 async clearOutdatedDiffs(repoId, validCommitHashes) {
-                    if (!this.db) return;
+                    if (!this.db) return { deletedCount: 0, scannedCount: 0 };
                     return new Promise((resolve, reject) => {
                         const tx = this.db.transaction('diffs', 'readwrite');
                         const store = tx.objectStore('diffs');
                         const idx = store.index('repoId');
                         const range = IDBKeyRange.only(repoId);
                         const req = idx.openCursor(range);
+
+                        let deletedCount = 0;
+                        let scannedCount = 0;
+
                         req.onsuccess = (e) => {
                             const cursor = e.target.result;
                             if (cursor) {
+                                scannedCount++;
                                 if (!validCommitHashes.has(cursor.value.commitHash)) {
                                     cursor.delete();
+                                    deletedCount++;
                                 }
                                 cursor.continue();
                             }
                         };
-                        tx.oncomplete = () => resolve();
+
+                        tx.oncomplete = () => resolve({ deletedCount, scannedCount });
                         tx.onerror = () => reject(tx.error);
                     });
                 }
@@ -6285,7 +6292,15 @@
                     // 构建有效 commit hash 集合，清理版本不匹配的缓存
                     const validCommitHashes = new Set(commits.map(c => c.hash));
                     idbManager.clearOutdatedDiffs(repoId, validCommitHashes)
-                        .then(count => debugLog('[IDB] 清理过期缓存完成'))
+                        .then(({ deletedCount, scannedCount }) => {
+                            if (deletedCount > 0) {
+                                debugLog('[IDB] 清理过期缓存完成，共清理 ' + deletedCount + ' 条（扫描 ' + scannedCount + ' 条）');
+                            } else if (scannedCount > 0) {
+                                debugLog('[IDB] 缓存扫描完毕，无过期记录（扫描 ' + scannedCount + ' 条）');
+                            } else {
+                                debugLog('[IDB] 缓存扫描完毕，该仓库无缓存数据');
+                            }
+                        })
                         .catch(e => debugLog('clearOutdatedDiffs error: ' + e.message));
                     idbManager.saveRepoMeta(window._lastDirHandle, {
                         commitCount: commits.length,
