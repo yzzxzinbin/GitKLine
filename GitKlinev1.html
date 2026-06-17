@@ -2360,8 +2360,61 @@
             font-size: 13px;
             color: var(--text-dim);
         }
+
+        /* ========== 后台预加载子开关布局 ========== */
+        .settings-sub-switches {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 10px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-top: 4px;
+        }
+
+        .settings-sub-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .settings-sub-label {
+            font-size: 13px;
+            color: var(--text-dim);
+            line-height: 1.4;
+        }
+
+        /* 子行内的 toggle 缩小一点 */
+        .settings-sub-row .toggle-switch .toggle-slider {
+            width: 40px;
+            height: 22px;
+        }
+
+        .settings-sub-row .toggle-switch .toggle-knob {
+            width: 18px;
+            height: 18px;
+            top: 2px;
+            left: 2px;
+        }
+
+        .settings-sub-row .toggle-switch input:checked + .toggle-slider .toggle-knob {
+            transform: translateX(18px);
+        }
+
+        /* 竖屏适配 */
+        @media (max-width: 600px) {
+            .settings-sub-switches {
+                padding: 8px 10px;
+                gap: 10px;
+            }
+
+            .settings-sub-label {
+                font-size: 12px;
+            }
+        }
     </style>
-    <base target="_blank">
     <base target="_blank">
 </head>
 
@@ -2608,20 +2661,31 @@
                         <div class="settings-color-scheme" id="colorSchemeGrid">
                         </div>
                     </div>
-                    <!-- 第5行：后台预加载开关 -->
+                    <!-- 第5行：后台预加载（包含两个子开关） -->
                     <div class="settings-row">
                         <div class="settings-label">
                             <i class="fas fa-bolt"></i> 后台预加载
-                            <span class="settings-hint">导入仓库后自动后台计算文件diff（关闭可改善UI响应）</span>
+                            <span class="settings-hint">导入仓库后自动后台计算文件 diff</span>
                         </div>
-                        <div class="settings-input-wrap" style="gap:12px;">
-                            <label class="toggle-switch">
-                                <input type="checkbox" id="bgPreloadToggle" checked>
-                                <span class="toggle-slider">
-                                    <span class="toggle-knob"></span>
-                                </span>
-                                <span class="toggle-label" id="bgPreloadLabel">已启用</span>
-                            </label>
+                        <div class="settings-sub-switches">
+                            <div class="settings-sub-row">
+                                <span class="settings-sub-label">Light 任务(列表数据)自动预加载</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="bgLightToggle" checked>
+                                    <span class="toggle-slider">
+                                        <span class="toggle-knob"></span>
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="settings-sub-row">
+                                <span class="settings-sub-label">Full 任务(diff文本)自动预加载</span>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="bgFullToggle" checked>
+                                    <span class="toggle-slider">
+                                        <span class="toggle-knob"></span>
+                                    </span>
+                                </label>
+                            </div>
                         </div>
                     </div>
                     <!-- 第6行：本地 Diff 缓存管理 -->
@@ -3008,7 +3072,7 @@
                     const close = lines;
                     candle = {
                         open: 0, close, high: close, low: 0,
-                        volume: lines + 1, change: close,
+                        volume: useContextDiff ? (lines + 1) : 0 , change: close,
                         dayIndex: m.dayIndex,
                         commitHash: m.commitHash,
                         commitMsg: m.commitMsg,
@@ -3030,7 +3094,7 @@
                     candle = {
                         open: prevClose, close: 0,
                         high: prevClose, low: 0,
-                        volume: lines + 1, change: -prevClose,
+                        volume: useContextDiff ? (lines + 1) : 0,  change: -prevClose,
                         dayIndex: m.dayIndex,
                         commitHash: m.commitHash,
                         commitMsg: m.commitMsg,
@@ -3048,7 +3112,7 @@
                     }
                     prevClose = 0;
                 } else {
-                    let additions = 0, deletions = 0, close = prevClose;
+                    let additions = 0, deletions = 0, close = prevClose, lineDiffComputed = false;
                     if (!m.isBinary) {
                         if (useContextDiff) {
                             diffResult = computeLineDiffContext(oldText, newText);
@@ -3056,6 +3120,7 @@
                             diffResult = computeLineDiff(oldText, newText);
                         }
                         if (diffResult) {
+                            lineDiffComputed = true;
                             additions = diffResult.filter(l => l.type === 'add').length;
                             deletions = diffResult.filter(l => l.type === 'del').length;
                             const oldLines = oldText ? oldText.split('\\n').length : 0;
@@ -3079,7 +3144,7 @@
                     const low = diffResult && diffResult.minLines !== undefined ? diffResult.minLines : Math.min(open, close);
                     candle = {
                         open, close, high, low,
-                        volume: additions + deletions + 1,
+                        volume: (useContextDiff || lineDiffComputed) ? (additions + deletions + 1) : 0,
                         change: close - open,
                         dayIndex: m.dayIndex,
                         commitHash: m.commitHash,
@@ -3187,6 +3252,10 @@
                     this.stopped = false;
                     this.scrollTimer = null;
 
+                    // 两个独立开关
+                    this.enableLight = true;
+                    this.enableFull = true;
+
                     this.workerPool.onWorkerRelease = () => {
                         if (!this.running && !this.stopped && this.hasWork()) {
                             this.schedule();
@@ -3207,6 +3276,11 @@
 
                 enqueue(path, type) {
                     if (this.stopped) return;
+
+                    // 根据开关过滤任务类型
+                    if (type === 'light' && !this.enableLight) return;
+                    if ((type === 'full' || type === 'priority') && !this.enableFull) return;
+
                     this.removeFromAll(path);
 
                     const version = state.klineVersion.get(path);
@@ -3741,7 +3815,8 @@
                 maxDiffLines: 8000,           // 最大diff行数
                 theme: 'dark',                // dark / light / ocean / high-contrast
                 colorScheme: 'red-up-green-down',
-                enableBackgroundPreload: true,
+                enableBackgroundLight: true,   // 轻量任务后台入池
+                enableBackgroundFull: true,    // 全量任务后台入池
                 protocols: {
                     'http:': 'HTTP 协议',
                     'https:': 'HTTPS 协议',
@@ -3945,13 +4020,11 @@
                 // 同步当前配置到输入框
                 document.getElementById('maxLinesInput').value = appConfig.maxDiffLines;
 
-                // 同步后台预加载开关
-                const toggle = document.getElementById('bgPreloadToggle');
-                const toggleLabel = document.getElementById('bgPreloadLabel');
-                if (toggle) {
-                    toggle.checked = appConfig.enableBackgroundPreload;
-                    if (toggleLabel) toggleLabel.textContent = toggle.checked ? '已启用' : '已关闭';
-                }
+                // 同步后台预加载子开关
+                const bgLightToggle = document.getElementById('bgLightToggle');
+                const bgFullToggle = document.getElementById('bgFullToggle');
+                if (bgLightToggle) bgLightToggle.checked = appConfig.enableBackgroundLight;
+                if (bgFullToggle) bgFullToggle.checked = appConfig.enableBackgroundFull;
 
                 // 渲染主题选择
                 renderThemeGrid();
@@ -4161,13 +4234,15 @@
 
                 const oldMax = appConfig.maxDiffLines;
                 const oldTheme = appConfig.theme;
-                const oldBgPreload = appConfig.enableBackgroundPreload;
+                const oldBgLight = appConfig.enableBackgroundLight;
+                const oldBgFull = appConfig.enableBackgroundFull;
 
                 appConfig.maxDiffLines = newMax;
-                const bgPreloadToggle = document.getElementById('bgPreloadToggle');
-                if (bgPreloadToggle) {
-                    appConfig.enableBackgroundPreload = bgPreloadToggle.checked;
-                }
+                const bgLightToggle = document.getElementById('bgLightToggle');
+                const bgFullToggle = document.getElementById('bgFullToggle');
+                if (bgLightToggle) appConfig.enableBackgroundLight = bgLightToggle.checked;
+                if (bgFullToggle) appConfig.enableBackgroundFull = bgFullToggle.checked;
+
                 applyTheme(appConfig.theme);
                 debugLog('[Settings] 保存设置: maxLines=' + newMax + ', theme=' + appConfig.theme + ', colorScheme=' + appConfig.colorScheme);
 
@@ -4177,7 +4252,8 @@
                         maxDiffLines: appConfig.maxDiffLines,
                         theme: appConfig.theme,
                         colorScheme: appConfig.colorScheme,
-                        enableBackgroundPreload: appConfig.enableBackgroundPreload
+                        enableBackgroundLight: appConfig.enableBackgroundLight,
+                        enableBackgroundFull: appConfig.enableBackgroundFull
                     }));
                     debugLog('[Settings] localStorage 保存成功');
                 } catch (e) {
@@ -4196,8 +4272,10 @@
                     drawChart();
                 }
 
-                if (oldBgPreload !== appConfig.enableBackgroundPreload) {
-                    showToast(appConfig.enableBackgroundPreload ? '后台预加载已启用，新仓库将自动计算' : '后台预加载已关闭，仅按需计算选中文件', 'info');
+                if (oldBgLight !== appConfig.enableBackgroundLight || oldBgFull !== appConfig.enableBackgroundFull) {
+                    const lightStatus = appConfig.enableBackgroundLight ? '开' : '关';
+                    const fullStatus = appConfig.enableBackgroundFull ? '开' : '关';
+                    showToast('Light预加载' + lightStatus + '，Full预加载' + fullStatus, 'info');
                 }
 
                 closeSettingsModal();
@@ -4229,8 +4307,12 @@
                 workerPool = new WorkerPool(poolSize, appConfig.maxDiffLines);
 
                 // 重新绑定任务队列（根据后台预加载设置）
-                if (taskQueue && appConfig.enableBackgroundPreload) {
+                const enableAnyPreload = appConfig.enableBackgroundLight || appConfig.enableBackgroundFull;
+
+                if (taskQueue && enableAnyPreload) {
                     taskQueue.workerPool = workerPool;
+                    taskQueue.enableLight = appConfig.enableBackgroundLight;
+                    taskQueue.enableFull = appConfig.enableBackgroundFull;
                     taskQueue.queues.priority = queueState?.priority || [];
                     taskQueue.queues.light = queueState?.light || [];
                     taskQueue.queues.full = queueState?.full || [];
@@ -4278,7 +4360,13 @@
                         if (parsed.maxDiffLines) appConfig.maxDiffLines = parsed.maxDiffLines;
                         if (parsed.theme) appConfig.theme = parsed.theme;
                         if (parsed.colorScheme) appConfig.colorScheme = parsed.colorScheme;
-                        if (typeof parsed.enableBackgroundPreload === 'boolean') appConfig.enableBackgroundPreload = parsed.enableBackgroundPreload;
+                        if (typeof parsed.enableBackgroundLight === 'boolean') appConfig.enableBackgroundLight = parsed.enableBackgroundLight;
+                        if (typeof parsed.enableBackgroundFull === 'boolean') appConfig.enableBackgroundFull = parsed.enableBackgroundFull;
+                        // 兼容旧版配置迁移
+                        if (parsed.enableBackgroundPreload !== undefined && parsed.enableBackgroundLight === undefined) {
+                            appConfig.enableBackgroundLight = parsed.enableBackgroundPreload;
+                            appConfig.enableBackgroundFull = parsed.enableBackgroundPreload;
+                        }
                         debugLog('[Settings] 从 localStorage 加载设置: maxLines=' + appConfig.maxDiffLines + ', theme=' + appConfig.theme);
                     } else {
                         debugLog('[Settings] 无本地设置，使用默认');
@@ -4756,7 +4844,7 @@
                             const close = lines;
                             candle = {
                                 open: 0, close, high: close, low: 0,
-                                volume: lines + 1, change: close,
+                                volume: useContextDiff ? (lines + 1) : 0,  change: close,
                                 dayIndex: record.commitIndex,
                                 commitHash: commit.hash,
                                 commitMsg: commit.message,
@@ -4771,7 +4859,7 @@
                             candle = {
                                 open: prevClose, close: 0,
                                 high: prevClose, low: 0,
-                                volume: lines + 1, change: -prevClose,
+                                volume: useContextDiff ? (lines + 1) : 0,  change: -prevClose,
                                 dayIndex: record.commitIndex,
                                 commitHash: commit.hash,
                                 commitMsg: commit.message,
@@ -4787,6 +4875,7 @@
                             let lineDiff = null;
                             let additions = 0, deletions = 0;
                             let close = prevClose;
+                            let lineDiffComputed = false;
 
                             if (!isBinaryString(oldText) && !isBinaryString(newText)) {
                                 if (useContextDiff) {
@@ -4807,6 +4896,7 @@
                                     // 后台预加载模式：使用轻量 lineDiff
                                     lineDiff = computeLineDiff(oldText, newText);
                                     if (lineDiff) {
+                                        lineDiffComputed = true;
                                         additions = lineDiff.filter(l => l.type === 'add').length;
                                         deletions = lineDiff.filter(l => l.type === 'del').length;
                                         const oldLines = oldText ? oldText.split('\n').length : 0;
@@ -4833,7 +4923,7 @@
 
                             candle = {
                                 open, close, high, low,
-                                volume: additions + deletions + 1,
+                                volume: (useContextDiff || lineDiffComputed) ? (additions + deletions + 1) : 0,
                                 change: close - open,
                                 dayIndex: record.commitIndex,
                                 commitHash: commit.hash,
@@ -6244,14 +6334,21 @@
                     const poolSize = Math.min(8, navigator.hardwareConcurrency || 2);
                     workerPool = new WorkerPool(poolSize,appConfig.maxDiffLines);
 
-                    if (appConfig.enableBackgroundPreload) {
+                    const enableAnyPreload = appConfig.enableBackgroundLight || appConfig.enableBackgroundFull;
+
+                    if (enableAnyPreload) {
                         taskQueue = new TaskQueue(workerPool);
+                        taskQueue.enableLight = appConfig.enableBackgroundLight;
+                        taskQueue.enableFull = appConfig.enableBackgroundFull;
                         taskQueue.start();
                         initOptimizedLazyLoading();
-                        debugLog('[System] 后台预加载已启用: 文件列表将自动计算');
+                        const parts = [];
+                        if (appConfig.enableBackgroundLight) parts.push('轻量');
+                        if (appConfig.enableBackgroundFull) parts.push('全量');
+                        debugLog('[System] 后台预加载已启用: ' + parts.join(' + '));
                     } else {
-                        debugLog('[System] 后台预加载已关闭: 仅按需计算选中文件');
-                        initOptimizedLazyLoading();
+                        debugLog('[System] 后台预加载已完全关闭: 仅按需计算选中文件');
+                        initOptimizedLazyLoading(); // 仍然初始化观察器，但任务不会自动入队
                     }
                 }
 
@@ -6269,7 +6366,7 @@
             }
 
             /* ============================================================
-               从 commits 生成 K线数据
+               从 模拟 commits 生成 K线数据
                ============================================================ */
             function buildKLineData(commits) {
                 const fileMarketCap = {};
@@ -6593,9 +6690,9 @@
                         updateInfoBar();
 
                         // 触发 Full 升级
-                        if (taskQueue && appConfig.enableBackgroundPreload) {
+                        if (taskQueue && appConfig.enableBackgroundFull) {
                             taskQueue.enqueue(path, 'priority');
-                        } else if (workerPool && !appConfig.enableBackgroundPreload) {
+                        } else if (workerPool) {
                             const records = state.fileCommitMap.get(path);
                             if (records) {
                                 const { meta, buffers } = await prefetchBlobPairs(records);
@@ -6624,9 +6721,9 @@
                     updateProgress();
                     drawChart();
                     updateInfoBar();
-                    if (taskQueue && appConfig.enableBackgroundPreload) {
+                    if (taskQueue && appConfig.enableBackgroundFull) {
                         taskQueue.enqueue(path, 'priority');
-                    } else if (workerPool && !appConfig.enableBackgroundPreload) {
+                    } else if (workerPool) {
                         const records = state.fileCommitMap.get(path);
                         if (records) {
                             const { meta, buffers } = await prefetchBlobPairs(records);
